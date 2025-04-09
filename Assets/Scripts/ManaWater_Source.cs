@@ -1,36 +1,36 @@
 // ManaWater_Source.cs
 using UnityEngine;
 
+/// <summary>
+/// 마나를 생성하는 소스 역할을 하는 클래스입니다.
+/// </summary>
 [System.Serializable]
 public class ManaWater_Source
 {
-    public Vector2Int position;
-    public float regenRate = 0.2f; // 초당 재생률
-    public float maxMana = 10f;    // 해당 셀에서의 최대 마나 (생성 제한용)
+    public Vector2Int position; // 마나 소스의 위치
+    public float regenRate; // 마나 생성 속도
+    public float maxMana; // 마나 최대 적층량
 
-    /// <summary>
-    /// 지정된 그리드 셀에 마나를 생성합니다. deltaTime은 경과 시간을 나타냅니다 (보통 Time.fixedDeltaTime).
-    /// </summary>
+    // 생성자 추가
+    public ManaWater_Source(Vector2Int position, float regenRate = 1.0f, float maxMana = 15.0f)
+    {
+        this.position = position;
+        this.regenRate = regenRate;
+        this.maxMana = maxMana;
+    }
+
     public void Generate(Mana_Cell[,] manaGrid, float deltaTime)
     {
-        // 그리드 범위 확인
-        int width = manaGrid.GetLength(0);
-        int height = manaGrid.GetLength(1);
-        if (position.x < 0 || position.x >= width || position.y < 0 || position.y >= height)
-            return; // 유효하지 않은 위치면 중단
-
-        var cell = manaGrid[position.x, position.y];
-
-        // 셀의 현재 마나가 최대치 미만일 때만 재생
-        if (cell.ManaPower < maxMana)
+        if (manaGrid == null || position.x < 0 || position.y < 0 || position.x >= manaGrid.GetLength(0) || position.y >= manaGrid.GetLength(1))
         {
-            // Mana_Cell의 AddMana 메서드를 사용하여 안전하게 값 추가 및 클램핑
-            cell.AddMana(regenRate * deltaTime);
+            Debug.LogWarning("마나 소스 위치가 유효하지 않습니다.");
+            return;
         }
 
-        // 역할이 불분명한 ManaWaterHeight 관련 로직 제거
-        // // cell.manaWaterHeight = Mathf.Min(1f, cell.manaWaterHeight + 0.1f * Time.deltaTime);
-        // 만약 이 기능(예: 소스 활성화 시각화)이 필요하다면,
-        // Mana_Cell에 관련 상태(예: bool IsSourceActive)나 메서드를 추가하고 관리해야 합니다.
+        // 현재 셀의 마나를 가져옵니다.
+        Mana_Cell cell = manaGrid[position.x, position.y];
+
+        // 최대 적층량을 고려하여 마나를 추가합니다.
+        cell.AddMana(regenRate * deltaTime, maxMana);
     }
 }

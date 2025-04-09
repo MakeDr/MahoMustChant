@@ -5,15 +5,15 @@ using System.Collections.Generic;
 public class ManaFlow_Manager : MonoBehaviour
 {
     [Header("Grid Settings")]
-    public int width = 20;
-    public int height = 20;
+    public int width = 20; // 그리드의 가로 크기
+    public int height = 20; // 그리드의 세로 크기
 
     [Header("Simulation Settings")]
     [Range(0f, 1f)] // 확산 계수는 보통 0.5 이하 (안정성 고려)
-    public float diffusionRate = 0.02f;
+    public float diffusionRate = 0.02f; // 마나 확산 비율
 
     [Header("Source Settings")]
-    public List<ManaWater_Source> manaWaterSources = new List<ManaWater_Source>();
+    public List<ManaWater_Source> manaWaterSources = new List<ManaWater_Source>(); // 마나 소스 리스트
 
     [Header("Visualization (Gizmo)")]
     public float maxManaForFullColor = 30f; // Gizmo 색상 계산에 사용
@@ -30,7 +30,17 @@ public class ManaFlow_Manager : MonoBehaviour
 
     void Awake()
     {
-        InitializeGrid();
+        // GridManager에서 manaGrid 가져오기
+        var gridManager = Object.FindFirstObjectByType<GridManager>();
+        if (gridManager != null)
+        {
+            manaGrid = gridManager.GetManaGrid();
+            Debug.Log("ManaFlow_Manager가 GridManager의 manaGrid를 참조했습니다.");
+        }
+        else
+        {
+            Debug.LogError("GridManager를 찾을 수 없습니다.");
+        }
     }
 
     void FixedUpdate() // 물리/시뮬레이션은 FixedUpdate에서 처리하는 것이 좋음
@@ -44,6 +54,9 @@ public class ManaFlow_Manager : MonoBehaviour
 
     // --- Initialization ---
 
+    /// <summary>
+    /// 그리드를 초기화합니다.
+    /// </summary>
     void InitializeGrid()
     {
         manaGrid = new Mana_Cell[width, height];
@@ -52,36 +65,48 @@ public class ManaFlow_Manager : MonoBehaviour
             for (int y = 0; y < height; y++)
             {
                 manaGrid[x, y] = new Mana_Cell(new Vector2Int(x, y));
-
-                // 테스트용으로 특정 영역을 Blocked 타입으로 설정
-                if (x >= 5 && x <= 10 && y >= 5 && y <= 10)
-                {
-                    manaGrid[x, y].SetType(Mana_Cell.CellType.Blocked);
-                }
             }
         }
+
+        Debug.Log("manaGrid가 성공적으로 초기화되었습니다.");
     }
 
     // --- Simulation Steps ---
 
+    /// <summary>
+    /// 모든 ManaWater_Source에서 마나를 생성합니다.
+    /// </summary>
+    /// <param name="deltaTime">시간 간격</param>
     void GenerateManaFromSources(float deltaTime)
     {
         foreach (var source in manaWaterSources)
         {
-            // 각 소스의 Generate 메서드 호출
-            source.Generate(manaGrid, deltaTime);
+            if (IsValidCell(source.position.x, source.position.y))
+            {
+                // 👇 여기서 직접 계산하지 않고, source의 Generate() 호출
+                source.Generate(manaGrid, deltaTime);
+            }
         }
     }
 
+    /// <summary>
+    /// 마나 흐름을 시뮬레이션합니다.
+    /// </summary>
+    /// <param name="deltaTime">시간 간격</param>
     void SimulateManaFlow(float deltaTime)
     {
-        // 1. 다음 상태를 저장할 임시 배열 생성
+        // 다음 상태를 저장할 임시 배열 생성
         float[,] nextManaPower = new float[width, height];
+        if (nextManaPower == null || nextManaPower.GetLength(0) != width || nextManaPower.GetLength(1) != height)
+        {
+            Debug.LogError("nextManaPower 배열 생성에 문제가 발생했습니다.");
+            return;
+        }
 
-        // 2. 현재 그리드 상태를 기반으로 마나 흐름 계산
+        // 현재 그리드 상태를 기반으로 마나 흐름 계산
         CalculateManaFlow(deltaTime, nextManaPower);
 
-        // 3. 계산된 결과를 실제 그리드에 적용
+        // 계산된 결과를 실제 그리드에 적용
         ApplyManaFlow(nextManaPower);
     }
 
@@ -98,10 +123,16 @@ public class ManaFlow_Manager : MonoBehaviour
         {
             for (int y = 0; y < height; y++)
             {
+                if (manaGrid[x, y] == null)
+                {
+                    Debug.LogWarning($"manaGrid[{x}, {y}]가 null입니다.");
+                    continue;
+                }
+
                 Mana_Cell currentCell = manaGrid[x, y];
 
-                // Blocked 타입의 셀은 마나 흐름을 차단
-                if (currentCell.Type == Mana_Cell.CellType.Blocked)
+                // Empty 타입과 ManaWater 타입에서만 마나 흐름 허용
+                if (currentCell.Type != Mana_Cell.CellType.Empty)
                     continue;
 
                 float currentPower = currentCell.ManaPower;
@@ -112,7 +143,7 @@ public class ManaFlow_Manager : MonoBehaviour
                     int nx = x + dir.x;
                     int ny = y + dir.y;
 
-                    if (IsValidCell(nx, ny))
+                    if (IsValidCell(nx, ny) && manaGrid[nx, ny] != null)
                     {
                         Mana_Cell neighborCell = manaGrid[nx, ny];
 
@@ -121,7 +152,7 @@ public class ManaFlow_Manager : MonoBehaviour
                             continue;
 
                         float neighborPower = neighborCell.ManaPower;
-                        float flow = Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * 10f * deltaTime);
+                        float flow = Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * deltaTime);
                         flow = Mathf.Min(flow, currentPower - totalFlowOut);
                         totalFlowOut += flow;
                         nextManaPower[nx, ny] += flow;
@@ -131,19 +162,6 @@ public class ManaFlow_Manager : MonoBehaviour
                 nextManaPower[x, y] += currentPower - totalFlowOut;
             }
         }
-    }
-
-    /// <summary>
-    /// 두 셀 간의 마나 흐름을 계산합니다.
-    /// </summary>
-    /// <param name="currentPower">현재 셀의 마나 파워</param>
-    /// <param name="neighborPower">이웃 셀의 마나 파워</param>
-    /// <param name="deltaTime">시간 간격</param>
-    /// <returns>흐르는 마나량</returns>
-    float CalculateFlow(float currentPower, float neighborPower, float deltaTime)
-    {
-        // 확산 비율과 시간 간격을 기반으로 흐름 계산
-        return Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * deltaTime);
     }
 
     /// <summary>
@@ -172,21 +190,10 @@ public class ManaFlow_Manager : MonoBehaviour
     {
         return x >= 0 && x < width && y >= 0 && y < height;
     }
-    public void Generate(Mana_Cell[,] manaGrid, float deltaTime)
+
+    public void SetManaGrid(Mana_Cell[,] grid)
     {
-        foreach (var source in manaWaterSources)
-        {
-            foreach (var cell in manaGrid)
-            {
-                if (cell.Type == Mana_Cell.CellType.Blocked)
-                    continue; // Blocked 타입의 셀에는 마나를 추가하지 않음
-
-                // 각 소스의 regenRate를 사용하여 마나를 추가
-                cell.AddMana(source.regenRate * deltaTime);
-            }
-        }
+        manaGrid = grid;
+        Debug.Log("ManaFlow_Manager에 manaGrid가 설정되었습니다.");
     }
-
-
-    // OnDrawGizmos 메서드는 제거됨 (Editor 스크립트로 이동)
 }
