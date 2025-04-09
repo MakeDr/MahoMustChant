@@ -130,7 +130,7 @@ GameObject:
   - component: {fileID: 528077079}
   - component: {fileID: 528077078}
   m_Layer: 0
-  m_Name: MagicFlowManager
+  m_Name: ManaFlowManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -150,6 +150,12 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   width: 20
   height: 20
+  diffusionRate: 0.572
+  manaWaterSources:
+  - position: {x: 10, y: 10}
+    regenRate: 5
+    maxMana: 30
+  maxManaForFullColor: 10
 --- !u!4 &528077079
 Transform:
   m_ObjectHideFlags: 0

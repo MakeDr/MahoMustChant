@@ -3,21 +3,23 @@ using UnityEngine;
 
 public class Mana_Cell
 {
-    // Position은 생성 시 설정되므로 public get만 있어도 충분할 수 있습니다.
     public Vector2Int Position { get; private set; }
-
-    // 외부에서 값을 읽을 수만 있고, 변경은 내부 메서드를 통해서만 가능하도록 합니다.
     public float ManaPower { get; private set; }
 
-    // ManaWaterHeight의 역할이 불분명하여 일단 주석 처리합니다.
-    // 필요하다면 역할을 명확히 하고 다시 구현해야 합니다.
-    // public float ManaWaterHeight { get; private set; }
+    // 셀 타입 정의
+    public enum CellType
+    {
+        Empty,  // 마나가 흐를 수 있는 빈 셀
+        Blocked // 마나가 흐를 수 없는 막힌 셀
+    }
 
-    public Mana_Cell(Vector2Int pos)
+    public CellType Type { get; private set; }
+
+    public Mana_Cell(Vector2Int pos, CellType type = CellType.Empty)
     {
         Position = pos;
+        Type = type;
         ManaPower = 0f;
-        // ManaWaterHeight = 0f;
     }
 
     /// <summary>
@@ -25,7 +27,7 @@ public class Mana_Cell
     /// </summary>
     public void SetMana(float amount)
     {
-        ManaPower = Mathf.Clamp(amount, 0f, 999f); // 클램핑 로직 포함
+        ManaPower = Mathf.Clamp(amount, 0f, 999f);
     }
 
     /// <summary>
@@ -36,5 +38,11 @@ public class Mana_Cell
         SetMana(ManaPower + amount);
     }
 
-    // ManaWaterHeight 관련 메서드가 필요하다면 여기에 추가 (예: SetWaterHeight, ResetWaterHeight 등)
+    /// <summary>
+    /// 셀의 타입을 설정합니다.
+    /// </summary>
+    public void SetType(CellType type)
+    {
+        Type = type;
+    }
 }

@@ -52,6 +52,12 @@ public class ManaFlow_Manager : MonoBehaviour
             for (int y = 0; y < height; y++)
             {
                 manaGrid[x, y] = new Mana_Cell(new Vector2Int(x, y));
+
+                // 테스트용으로 특정 영역을 Blocked 타입으로 설정
+                if (x >= 5 && x <= 10 && y >= 5 && y <= 10)
+                {
+                    manaGrid[x, y].SetType(Mana_Cell.CellType.Blocked);
+                }
             }
         }
     }
@@ -86,20 +92,21 @@ public class ManaFlow_Manager : MonoBehaviour
     /// <param name="nextManaPower">다음 상태를 저장할 배열</param>
     void CalculateManaFlow(float deltaTime, float[,] nextManaPower)
     {
-        // 확산 방향 (상하좌우)
         Vector2Int[] directions = { Vector2Int.right, Vector2Int.left, Vector2Int.up, Vector2Int.down };
 
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
             {
-                // 현재 셀의 마나 파워 가져오기
-                float currentPower = manaGrid[x, y].ManaPower;
+                Mana_Cell currentCell = manaGrid[x, y];
 
-                // 현재 셀에서 나가는 총 마나량
+                // Blocked 타입의 셀은 마나 흐름을 차단
+                if (currentCell.Type == Mana_Cell.CellType.Blocked)
+                    continue;
+
+                float currentPower = currentCell.ManaPower;
                 float totalFlowOut = 0f;
 
-                // 이웃 셀로의 마나 흐름 계산
                 foreach (var dir in directions)
                 {
                     int nx = x + dir.x;
@@ -107,22 +114,20 @@ public class ManaFlow_Manager : MonoBehaviour
 
                     if (IsValidCell(nx, ny))
                     {
-                        // 이웃 셀의 마나 파워 가져오기
-                        float neighborPower = manaGrid[nx, ny].ManaPower;
+                        Mana_Cell neighborCell = manaGrid[nx, ny];
 
-                        // 현재 셀에서 이웃 셀로 흐르는 마나량 계산
-                        float flow = CalculateFlow(currentPower, neighborPower, deltaTime);
+                        // Blocked 타입의 이웃 셀로는 마나가 흐르지 않음
+                        if (neighborCell.Type == Mana_Cell.CellType.Blocked)
+                            continue;
 
-                        // 나가는 총량이 현재 마나를 초과하지 않도록 제한
+                        float neighborPower = neighborCell.ManaPower;
+                        float flow = Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * 10f * deltaTime);
                         flow = Mathf.Min(flow, currentPower - totalFlowOut);
                         totalFlowOut += flow;
-
-                        // 이웃 셀의 다음 상태에 흘러 들어온 마나량 추가
                         nextManaPower[nx, ny] += flow;
                     }
                 }
 
-                // 현재 셀의 다음 상태 = (원래 마나량) - (나간 총량)
                 nextManaPower[x, y] += currentPower - totalFlowOut;
             }
         }
@@ -138,7 +143,7 @@ public class ManaFlow_Manager : MonoBehaviour
     float CalculateFlow(float currentPower, float neighborPower, float deltaTime)
     {
         // 확산 비율과 시간 간격을 기반으로 흐름 계산
-        return Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * 10f * deltaTime);
+        return Mathf.Max(0f, (currentPower - neighborPower) * diffusionRate * deltaTime);
     }
 
     /// <summary>
@@ -166,6 +171,20 @@ public class ManaFlow_Manager : MonoBehaviour
     bool IsValidCell(int x, int y)
     {
         return x >= 0 && x < width && y >= 0 && y < height;
+    }
+    public void Generate(Mana_Cell[,] manaGrid, float deltaTime)
+    {
+        foreach (var source in manaWaterSources)
+        {
+            foreach (var cell in manaGrid)
+            {
+                if (cell.Type == Mana_Cell.CellType.Blocked)
+                    continue; // Blocked 타입의 셀에는 마나를 추가하지 않음
+
+                // 각 소스의 regenRate를 사용하여 마나를 추가
+                cell.AddMana(source.regenRate * deltaTime);
+            }
+        }
     }
 
 
