@@ -1,155 +1,140 @@
-﻿using System.Collections.Generic;
+﻿// WorldGridManager.cs
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
 public class WorldGridManager : MonoBehaviour
 {
-    public Tilemap groundTilemap;    // 지면 타일맵
-    public Tilemap wallTilemap;      // 벽 타일맵
-    public Tilemap manaWaterTilemap; // 마나 물 타일맵
-    public Vector2Int gridSize;
+    [Header("타일맵 참조")]
+    [Tooltip("기준이 되는 지면 타일맵")]
+    public Tilemap groundTilemap;
+    [Tooltip("벽 정보를 담은 타일맵 (선택 사항)")]
+    public Tilemap wallTilemap;
+    [Tooltip("마나 물 정보를 담은 타일맵 (선택 사항)")]
+    public Tilemap manaWaterTilemap;
 
     [Header("Gizmo 설정")]
-    public bool showGizmos = true;   // Gizmo 표시 여부를 제어하는 토글
+    public bool showGizmos = true;
 
-    private WorldTile[,] worldGrid;
+    private WorldTile[,] _worldGrid; // 내부 그리드 데이터
+    private Vector2Int _gridSize;    // 그리드 크기 (타일 수)
+    private Vector2Int _gridOrigin;  // 그리드의 월드 좌표 원점 (타일맵의 bottom-left)
 
-    private void Start()
+    // --- Public Accessors ---
+    /// <summary>월드 그리드 데이터 (읽기 전용)</summary>
+    public WorldTile[,] WorldGrid => _worldGrid;
+    /// <summary>그리드 크기 (타일 개수)</summary>
+    public Vector2Int GridSize => _gridSize;
+    /// <summary>그리드 원점의 월드 좌표</summary>
+    public Vector2Int GridOrigin => _gridOrigin;
+
+
+    private void Awake()
     {
         InitializeGrid();
     }
 
-    /// <summary>
-    /// 타일맵 데이터를 기반으로 그리드를 초기화합니다.
-    /// </summary>
     public void InitializeGrid()
     {
         if (groundTilemap == null)
         {
-            Debug.LogError("groundTilemap이 설정되지 않았습니다.");
+            Debug.LogError("WorldGridManager: groundTilemap 참조가 없습니다!");
             return;
         }
 
-        Vector2Int gridOffset = GetGridOffset(groundTilemap);
-        gridSize = GetGridSize(groundTilemap);
+        // 기준 타일맵에서 경계 계산
+        groundTilemap.CompressBounds(); // 실제 타일 영역만 계산하도록 압축
+        BoundsInt bounds = groundTilemap.cellBounds;
 
-        Debug.Log($"Grid initialized with size: {gridSize}, offset: {gridOffset}");
+        _gridOrigin = new Vector2Int(bounds.xMin, bounds.yMin);
+        _gridSize = new Vector2Int(bounds.size.x, bounds.size.y);
 
-        worldGrid = new WorldTile[gridSize.x, gridSize.y];
-
-        for (int x = 0; x < gridSize.x; x++)
+        if (_gridSize.x <= 0 || _gridSize.y <= 0)
         {
-            for (int y = 0; y < gridSize.y; y++)
+            Debug.LogError($"WorldGridManager: 유효하지 않은 그리드 크기({_gridSize}). groundTilemap 확인 필요.");
+            return;
+        }
+
+        Debug.Log($"WorldGridManager: 그리드 초기화 - 크기: {_gridSize}, 원점: {_gridOrigin}");
+        _worldGrid = new WorldTile[_gridSize.x, _gridSize.y];
+
+        // 그리드 배열 인덱스 (ix, iy) 와 월드 그리드 좌표 (gridCoords) 구분
+        for (int ix = 0; ix < _gridSize.x; ix++) // ix: 내부 배열의 x 인덱스
+        {
+            for (int iy = 0; iy < _gridSize.y; iy++) // iy: 내부 배열의 y 인덱스
             {
-                Vector2Int worldPos = new Vector2Int(x + gridOffset.x, y + gridOffset.y);
-                TerrainType terrain = ResolveTerrainAt(worldPos);
-                worldGrid[x, y] = new WorldTile(worldPos, terrain);
+                // 배열 인덱스를 실제 월드 그리드 좌표로 변환
+                Vector2Int gridCoords = new Vector2Int(ix + _gridOrigin.x, iy + _gridOrigin.y);
+
+                TerrainType terrain = ResolveTerrainAt(gridCoords);
+
+                // WorldTile 생성 (생성자에서 Diffusivity 등 자동 설정됨)
+                _worldGrid[ix, iy] = new WorldTile(gridCoords, terrain);
             }
         }
+        Debug.Log("WorldGridManager: 그리드 초기화 완료.");
     }
 
-    /// <summary>
-    /// 월드 좌표에 해당하는 타일의 TerrainType을 판별합니다.
-    /// </summary>
-    private TerrainType ResolveTerrainAt(Vector2Int worldPos)
+    private TerrainType ResolveTerrainAt(Vector2Int gridCoords)
     {
-        Vector3Int cell = new Vector3Int(worldPos.x, worldPos.y, 0);
+        // Vector2Int 좌표를 Tilemap에서 사용하는 Vector3Int로 변환
+        Vector3Int cellPosition = new Vector3Int(gridCoords.x, gridCoords.y, 0);
 
-        // 마나 물 타일맵 우선 처리
-        if (manaWaterTilemap != null && manaWaterTilemap.HasTile(cell))
-            return TerrainType.ManaWater;
-
-        // 벽 타일맵 처리
-        if (wallTilemap != null && wallTilemap.HasTile(cell))
+        // 우선순위: 벽 > 마나물 > 지면
+        if (wallTilemap != null && wallTilemap.HasTile(cellPosition))
             return TerrainType.Wall;
-
-        // 지면 타일맵 처리
-        if (groundTilemap != null && groundTilemap.HasTile(cell))
+        if (manaWaterTilemap != null && manaWaterTilemap.HasTile(cellPosition))
+            return TerrainType.ManaWater;
+        if (groundTilemap.HasTile(cellPosition)) // 기준 타일맵은 null 체크 불필요 (위에서 함)
             return TerrainType.Ground;
 
-        // 타일이 없는 경우
         return TerrainType.Empty;
     }
 
-    /// <summary>
-    /// Gizmo를 항상 그리며, 토글로 제어할 수 있습니다.
-    /// </summary>
     private void OnDrawGizmos()
     {
-        if (!showGizmos) return; // Gizmo 표시가 꺼져 있으면 종료
+        if (!showGizmos || _worldGrid == null) return;
 
-        if (worldGrid == null)
+        // Gizmo 그리기 시에도 배열 인덱스(ix, iy)와 타일 좌표(tile.GridCoords) 구분
+        for (int ix = 0; ix < _gridSize.x; ix++)
         {
-            Debug.LogWarning("worldGrid가 초기화되지 않았습니다. InitializeGrid를 호출하세요.");
-            return;
-        }
-
-        if (groundTilemap == null)
-        {
-            Debug.LogError("groundTilemap이 설정되지 않았습니다.");
-            return;
-        }
-
-        // 타일맵의 범위를 가져옵니다.
-        BoundsInt bounds = GetTileBounds(groundTilemap);
-        Vector2Int gridOffset = GetGridOffset(groundTilemap);
-
-        for (int x = 0; x < gridSize.x; x++)
-        {
-            for (int y = 0; y < gridSize.y; y++)
+            for (int iy = 0; iy < _gridSize.y; iy++)
             {
-                WorldTile tile = worldGrid[x, y];
+                WorldTile tile = _worldGrid[ix, iy];
                 if (tile == null) continue;
 
-                Vector3 worldPos = groundTilemap.GetCellCenterWorld(new Vector3Int(x + gridOffset.x, y + gridOffset.y, 0)); // gridOffset 적용
+                // 타일의 그리드 좌표를 사용하여 월드 중심 위치 얻기
+                Vector3 worldCenterPos = groundTilemap != null ?
+                    groundTilemap.GetCellCenterWorld((Vector3Int)tile.GridCoords) :
+                    new Vector3(tile.GridCoords.x + 0.5f, tile.GridCoords.y + 0.5f, 0); // Fallback
 
-                // 색상 설정
-                switch (tile.Terrain)
-                {
-                    case TerrainType.ManaWater:
-                        Gizmos.color = new Color(0f, 1f, 1f, 0.5f); // 민트색 (Cyan) 반투명
-                        break;
-                    case TerrainType.Ground:
-                        Gizmos.color = new Color(0f, 1f, 0f, 0.5f); // 녹색 (Green) 반투명
-                        break;
-                    case TerrainType.Wall:
-                        Gizmos.color = new Color(0f, 0f, 0.5f, 0.5f); // 군청색 (Navy) 반투명
-                        break;
-                    case TerrainType.Empty:
-                    default:
-                        Gizmos.color = new Color(1f, 1f, 1f, 0.5f); // 흰색 (White) 반투명
-                        break;
-                }
-
-                // 타일 시각화
-                Gizmos.DrawCube(worldPos, groundTilemap.cellSize * 0.9f);
+                // 지형 타입 또는 마나 양에 따라 Gizmo 그리기 (이전과 동일)
+                Gizmos.color = GetGizmoColor(tile); // 색상 결정 로직 분리 가능
+                Vector3 gizmoSize = (groundTilemap != null ? groundTilemap.cellSize : Vector3.one) * 0.9f;
+                Gizmos.DrawCube(worldCenterPos, gizmoSize);
             }
         }
     }
 
-    /// <summary>
-    /// 타일맵에서 실제 존재하는 셀 범위를 반환합니다.
-    /// </summary>
-    private BoundsInt GetTileBounds(Tilemap tilemap)
+    // Gizmo 색상 결정 로직 (예시)
+    private Color GetGizmoColor(WorldTile tile)
     {
-        return tilemap.cellBounds;
-    }
+        // 마나 양에 따라 색상 변경 (우선순위 높게)
+        if (tile.Mana != null && tile.Mana.CurrentMana > 0.1f)
+        {
+            float manaRatio = Mathf.Clamp01(tile.Mana.CurrentMana / tile.Mana.MaxMana); // MaxMana 기준 비율
+            // 예: 파란색(0) -> 청록색(0.5) -> 노란색(1)
+            if (manaRatio < 0.5f) return Color.Lerp(Color.blue, Color.cyan, manaRatio * 2f);
+            else return Color.Lerp(Color.cyan, Color.yellow, (manaRatio - 0.5f) * 2f);
+        }
 
-    /// <summary>
-    /// 타일맵의 왼쪽 아래 모서리 위치(=offset)를 반환합니다.
-    /// </summary>
-    private Vector2Int GetGridOffset(Tilemap tilemap)
-    {
-        BoundsInt bounds = GetTileBounds(tilemap);
-        return new Vector2Int(bounds.xMin, bounds.yMin);
-    }
-
-    /// <summary>
-    /// 타일맵의 유효한 범위 크기(=배열 크기)를 반환합니다.
-    /// </summary>
-    private Vector2Int GetGridSize(Tilemap tilemap)
-    {
-        BoundsInt bounds = GetTileBounds(tilemap);
-        return new Vector2Int(bounds.size.x, bounds.size.y);
+        // 기본 지형 색상
+        return tile.Terrain switch
+        {
+            TerrainType.ManaWater => new Color(0.1f, 0.7f, 1f, 0.4f),
+            TerrainType.Ground => new Color(0.4f, 0.8f, 0.2f, 0.4f),
+            TerrainType.Wall => new Color(0.3f, 0.3f, 0.3f, 0.6f),
+            TerrainType.Empty => new Color(1f, 1f, 1f, 0.1f),
+            _ => Color.clear
+        };
     }
 }
