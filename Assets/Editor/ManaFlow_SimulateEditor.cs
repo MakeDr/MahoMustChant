@@ -9,9 +9,9 @@ using UnityEditor;
 public class ManaFlow_SimulateEditor : Editor
 {
     private static bool showGizmos = true;
-    private static bool showManaLabels = true;
+    private static bool showManaLabels = false;
     private static float gizmoManaCap = 10f;
-    private static float gizmoAlpha = 0.7f; // 추가된 투명도 제어
+    private static float gizmoAlpha = 0.3f; // 추가된 투명도 제어
 
     private ManaFlow_Simulate sim;
 
