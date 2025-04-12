@@ -27,10 +27,14 @@ public class SlimeCore : MonoBehaviour
 
     void FixedUpdate()
     {
+
         // 위치 및 회전 업데이트
         corePosition = rb.position;
         coreRotation = rb.rotation;
         coreMana = mana;
+
+        // Debug: CorePosition 값을 확인
+        Debug.Log($"CorePosition: {corePosition}");
 
         // slimeInstance가 null이 아닌 경우에만 데이터 전송
         if (slimeInstance != null)

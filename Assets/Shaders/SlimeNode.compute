@@ -1,12 +1,17 @@
 #pragma kernel CSMain
 
+float2 CorePosition;
+
 struct SlimeNode
 {
     float2 position; 
     float2 velocity; 
     float2 force; 
     float mass; 
+    
+    float2 debugCorePos; //debugging purposes
 };
+
 
 
 RWStructuredBuffer<SlimeNode> NodeBuffer; 
@@ -15,16 +20,15 @@ float stiffness = 10.0f;
 float damping = 0.9f; 
 float centerRadius = 1.0f; 
 
+
 [numthreads(64, 1, 1)] 
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
+    
     uint nodeIndex = id.x;
     SlimeNode node = NodeBuffer[nodeIndex];
-
-    float2 centerPosition = float2(0.0f, 0.0f);
-
-
-    float2 direction = node.position - centerPosition;
+    
+    float2 direction = node.position - CorePosition;
     float distance = length(direction);
     
     float2 force = normalize(direction) * (distance - centerRadius) * stiffness;
@@ -37,6 +41,8 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     node.velocity *= damping;
 
     node.position += node.velocity * deltaTime;
+    
+    node.debugCorePos = CorePosition; //debugging purposes
 
     NodeBuffer[nodeIndex] = node;
 }

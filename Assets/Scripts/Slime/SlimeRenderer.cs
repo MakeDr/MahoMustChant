@@ -3,21 +3,16 @@ using UnityEngine;
 public class SlimeRenderer : MonoBehaviour
 {
     public ComputeShader slimeComputeShader;
-    public int nodeCount = 12;
+
+    [SerializeField]
+    private int nodeCount = 12;
+    public int NodeCount => nodeCount; // 읽기 전용 프로퍼티
 
     private ComputeBuffer nodeBuffer;
     private int kernel;
     private Mesh mesh;
     private MeshFilter meshFilter;
     private MeshRenderer meshRenderer;
-
-    struct SlimeNode
-    {
-        public Vector2 position;
-        public Vector2 velocity;
-        public Vector2 force;
-        public float mass;
-    }
 
     void Start()
     {
@@ -46,7 +41,7 @@ public class SlimeRenderer : MonoBehaviour
 
     void InitializeNodes()
     {
-        int stride = sizeof(float) * (2 + 2 + 2 + 1);
+        int stride = SlimeNodeUtility.GetStride(); // SlimeNode의 stride를 가져옴
         nodeBuffer = new ComputeBuffer(nodeCount, stride);
 
         SlimeNode[] nodes = new SlimeNode[nodeCount];
