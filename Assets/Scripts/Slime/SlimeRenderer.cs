@@ -2,113 +2,118 @@ using UnityEngine;
 
 public class SlimeRenderer : MonoBehaviour
 {
-    public ComputeShader slimeComputeShader;
+    // Remove ComputeShader reference if it's not used for rendering itself
+    // public ComputeShader slimeComputeShader;
 
-    [SerializeField]
-    private int nodeCount = 12;
-    public int NodeCount => nodeCount;
+    // No longer owns the buffer
+    private ComputeBuffer currentActiveNodeBuffer;
+    private int currentNodeCount;
 
-    private ComputeBuffer nodeBuffer;
-    public ComputeBuffer NodeBuffer => nodeBuffer;
-
-    private int kernel;
     private Mesh mesh;
     private MeshFilter meshFilter;
-    private MeshRenderer meshRenderer;
+    private MeshRenderer meshRenderer; // Ensure you have a material assigned that can use the node data or just for visualization
 
-    void Start()
+    void Awake() // Changed to Awake
     {
-        kernel = slimeComputeShader.FindKernel("CSMain");
-        InitializeNodes();
+        // Don't initialize nodes or buffer here
         InitializeMeshComponents();
         InitializeMesh();
     }
 
-    void Update()
+    // Called by SlimeInstance to provide the latest buffer
+    public void SetNodeBuffer(ComputeBuffer buffer, int count)
     {
-        if (nodeBuffer == null) return;
+        currentActiveNodeBuffer = buffer;
+        currentNodeCount = count;
+    }
 
-        DispatchShader();
-        UpdateMesh();
+    // Update the mesh based on the buffer provided by SlimeInstance
+    void Update() // Update mesh rendering in Update (visuals)
+    {
+        if (currentActiveNodeBuffer == null || !currentActiveNodeBuffer.IsValid()) return;
+
+        // --- Option A: Readback for CPU Mesh Update (Less Performant) ---
+        UpdateMeshCPU();
+
+        // --- Option B: Use Buffer Directly in Shader (More Performant) ---
+        // If you have a rendering shader that reads the node buffer directly:
+        // meshRenderer.material.SetBuffer("_NodeBuffer", currentActiveNodeBuffer); // Use the correct name for the *rendering* shader
+        // Graphics.DrawMeshInstancedProcedural or similar might be used here if not using a standard MeshFilter/Renderer setup.
     }
 
     void OnDestroy()
     {
-        nodeBuffer?.Release();
-        nodeBuffer = null;
-    }
-
-    private void InitializeNodes()
-    {
-        int stride = SlimeNodeUtility.GetStride();
-        nodeBuffer = new ComputeBuffer(nodeCount, stride);
-
-        SlimeNode[] nodes = new SlimeNode[nodeCount];
-        float angleStep = Mathf.PI * 2f / nodeCount;
-
-        for (int i = 0; i < nodeCount; i++)
-        {
-            float angle = i * angleStep;
-            nodes[i] = new SlimeNode
-            {
-                position = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)),
-                velocity = Vector2.zero,
-                force = Vector2.zero,
-                mass = 1f
-            };
-        }
-
-        nodeBuffer.SetData(nodes);
-        slimeComputeShader.SetBuffer(kernel, "_NodeBuffer", nodeBuffer);
+        // Don't release the buffer here - SlimeInstance owns it
+        currentActiveNodeBuffer = null;
     }
 
     private void InitializeMeshComponents()
     {
-        meshFilter = GetComponent<MeshFilter>() ?? gameObject.AddComponent<MeshFilter>();
-        meshRenderer = GetComponent<MeshRenderer>() ?? gameObject.AddComponent<MeshRenderer>();
+        meshFilter = GetComponent<MeshFilter>();
+        if (meshFilter == null) meshFilter = gameObject.AddComponent<MeshFilter>();
+
+        meshRenderer = GetComponent<MeshRenderer>();
+        if (meshRenderer == null) meshRenderer = gameObject.AddComponent<MeshRenderer>();
+        // Ensure a material is assigned in the inspector
+        if (meshRenderer.sharedMaterial == null) Debug.LogWarning("SlimeRenderer needs a material assigned!");
     }
 
     private void InitializeMesh()
     {
-        mesh = new Mesh();
+        mesh = new Mesh
+        {
+            name = "Slime Mesh"
+            // Mark dynamic for frequent updates
+            // markDynamic = true; // Obsolete, use GraphicsBuffer instead for high perf
+        };
         meshFilter.mesh = mesh;
     }
 
-    private void DispatchShader()
+    // CPU-based mesh update (causes GPU->CPU sync)
+    private void UpdateMeshCPU()
     {
-        slimeComputeShader.SetInt("nodeCount", nodeCount);
-        slimeComputeShader.SetFloat("deltaTime", Time.deltaTime);
-        slimeComputeShader.SetFloat("stiffness", 10.0f);
-        slimeComputeShader.SetFloat("damping", 0.9f);
-        slimeComputeShader.SetFloat("centerRadius", 1.0f);
-        slimeComputeShader.SetBuffer(kernel, "_NodeBuffer", nodeBuffer);
+        if (currentNodeCount <= 0) return;
 
-        int threadGroups = Mathf.CeilToInt(nodeCount / 64f);
-        slimeComputeShader.Dispatch(kernel, threadGroups, 1, 1);
-    }
+        // *** This GetData call forces synchronization and can stall ***
+        SlimeInstance.SlimeNode[] nodes = new SlimeInstance.SlimeNode[currentNodeCount]; // Use struct definition from SlimeInstance
+        currentActiveNodeBuffer.GetData(nodes);
 
-    private void UpdateMesh()
-    {
-        SlimeNode[] nodes = new SlimeNode[nodeCount];
-        nodeBuffer.GetData(nodes);
+        // Check if mesh needs resizing (vertices)
+        if (mesh.vertexCount != currentNodeCount)
+        {
+            mesh.Clear(); // Clear old data if resizing
+            mesh.vertices = new Vector3[currentNodeCount]; // Allocate new array
+        }
 
-        Vector3[] vertices = new Vector3[nodeCount];
-        for (int i = 0; i < nodeCount; i++)
+        Vector3[] vertices = mesh.vertices; // Get potentially existing array to modify
+        for (int i = 0; i < currentNodeCount; i++)
         {
             vertices[i] = new Vector3(nodes[i].position.x, nodes[i].position.y, 0);
         }
 
-        int[] triangles = new int[(nodeCount - 2) * 3];
-        int index = 0;
-        for (int i = 1; i < nodeCount - 1; i++)
+        // Only recalculate triangles if the count changed
+        if (mesh.triangles.Length != (currentNodeCount - 2) * 3 && currentNodeCount >= 3)
         {
-            triangles[index++] = 0;
-            triangles[index++] = i;
-            triangles[index++] = i + 1;
+            int[] triangles = new int[(currentNodeCount - 2) * 3];
+            int index = 0;
+            // Simple fan triangulation from the first vertex
+            for (int i = 1; i < currentNodeCount - 1; i++)
+            {
+                triangles[index++] = 0;
+                triangles[index++] = i;
+                triangles[index++] = i + 1;
+            }
+            mesh.triangles = triangles;
         }
 
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
+
+        mesh.vertices = vertices; // Assign potentially modified array back
+        mesh.RecalculateBounds(); // Important for visibility
+        // RecalculateNormals might be slow, consider alternatives if needed
         mesh.RecalculateNormals();
     }
 }
+
+// Make sure SlimeNode definition is consistent or accessible
+// [StructLayout(LayoutKind.Sequential)]
+// public struct SlimeNode { ... } // Defined in SlimeInstance now
