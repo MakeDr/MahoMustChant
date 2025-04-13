@@ -18,3 +18,4 @@ public static class SlimeNodeUtility
         return Marshal.SizeOf(typeof(SlimeNode));
     }
 }
+

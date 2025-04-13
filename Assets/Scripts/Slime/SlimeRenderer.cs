@@ -9,6 +9,8 @@ public class SlimeRenderer : MonoBehaviour
     public int NodeCount => nodeCount; // 읽기 전용 프로퍼티
 
     private ComputeBuffer nodeBuffer;
+    public ComputeBuffer NodeBuffer => nodeBuffer; // 외부 접근 허용
+
     private int kernel;
     private Mesh mesh;
     private MeshFilter meshFilter;
@@ -26,14 +28,14 @@ public class SlimeRenderer : MonoBehaviour
         meshFilter = GetComponent<MeshFilter>();
         if (meshFilter == null)
         {
-            meshFilter = gameObject.AddComponent<MeshFilter>(); // MeshFilter 추가
+            meshFilter = gameObject.AddComponent<MeshFilter>();
         }
 
         // MeshRenderer 확인 후 없으면 추가
         meshRenderer = GetComponent<MeshRenderer>();
         if (meshRenderer == null)
         {
-            meshRenderer = gameObject.AddComponent<MeshRenderer>(); // MeshRenderer 추가
+            meshRenderer = gameObject.AddComponent<MeshRenderer>();
         }
 
         meshFilter.mesh = mesh;
@@ -41,7 +43,7 @@ public class SlimeRenderer : MonoBehaviour
 
     void InitializeNodes()
     {
-        int stride = SlimeNodeUtility.GetStride(); // SlimeNode의 stride를 가져옴
+        int stride = SlimeNodeUtility.GetStride();
         nodeBuffer = new ComputeBuffer(nodeCount, stride);
 
         SlimeNode[] nodes = new SlimeNode[nodeCount];
@@ -59,7 +61,7 @@ public class SlimeRenderer : MonoBehaviour
         }
 
         nodeBuffer.SetData(nodes);
-        slimeComputeShader.SetBuffer(kernel, "NodeBuffer", nodeBuffer);
+        slimeComputeShader.SetBuffer(kernel, "_NodeBuffer", nodeBuffer);
     }
 
     void Update()
@@ -67,7 +69,6 @@ public class SlimeRenderer : MonoBehaviour
         if (nodeBuffer == null) return;
 
         slimeComputeShader.Dispatch(kernel, Mathf.CeilToInt(nodeCount / 64.0f), 1, 1);
-
         UpdateMesh();
     }
 
@@ -76,29 +77,24 @@ public class SlimeRenderer : MonoBehaviour
         SlimeNode[] nodes = new SlimeNode[nodeCount];
         nodeBuffer.GetData(nodes);
 
-        // 메쉬의 정점 배열과 삼각형의 인덱스 배열
         Vector3[] vertices = new Vector3[nodeCount];
-        int[] triangles = new int[(nodeCount - 2) * 3]; // 기본적으로 n-2개의 삼각형이 존재
+        int[] triangles = new int[(nodeCount - 2) * 3];
 
         for (int i = 0; i < nodeCount; i++)
         {
             vertices[i] = new Vector3(nodes[i].position.x, nodes[i].position.y, 0);
         }
 
-        // 삼각형 인덱스를 연결
         int index = 0;
         for (int i = 1; i < nodeCount - 1; i++)
         {
-            triangles[index++] = 0; // 첫 번째 정점
-            triangles[index++] = i; // 현재 정점
-            triangles[index++] = i + 1; // 다음 정점
+            triangles[index++] = 0;
+            triangles[index++] = i;
+            triangles[index++] = i + 1;
         }
 
-        // 메시 업데이트
         mesh.vertices = vertices;
         mesh.triangles = triangles;
-
-        // 메시의 노멀을 계산
         mesh.RecalculateNormals();
     }
 
@@ -107,6 +103,7 @@ public class SlimeRenderer : MonoBehaviour
         if (nodeBuffer != null)
         {
             nodeBuffer.Release();
+            nodeBuffer = null;
         }
     }
 }

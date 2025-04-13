@@ -1,48 +1,45 @@
 #pragma kernel CSMain
 
-float2 CorePosition;
+float deltaTime;
+
+float stiffness = 10.0f;
+float damping = 0.9f;
+float centerRadius = 1.0f;
 
 struct SlimeNode
 {
-    float2 position; 
-    float2 velocity; 
-    float2 force; 
-    float mass; 
-    
-    float2 debugCorePos; //debugging purposes
+    float2 position;
+    float2 velocity;
+    float2 force;
+    float mass;
+
+    float2 debugCorePos; // debugging only
 };
 
+StructuredBuffer<float4> _CoreBuffer; // x: pos.x, y: pos.y, z: rotation, w: mana
+RWStructuredBuffer<SlimeNode> _NodeBuffer;
 
-
-RWStructuredBuffer<SlimeNode> NodeBuffer; 
-float deltaTime; 
-float stiffness = 10.0f; 
-float damping = 0.9f; 
-float centerRadius = 1.0f; 
-
-
-[numthreads(64, 1, 1)] 
+[numthreads(64, 1, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    
     uint nodeIndex = id.x;
-    SlimeNode node = NodeBuffer[nodeIndex];
-    
-    float2 direction = node.position - CorePosition;
+    SlimeNode node = _NodeBuffer[nodeIndex];
+
+    float2 corePos = _CoreBuffer[0].xy;
+    float coreRotation = _CoreBuffer[0].z;
+    float coreMana = _CoreBuffer[0].w;
+
+    float2 direction = node.position - corePos;
     float distance = length(direction);
-    
+
     float2 force = normalize(direction) * (distance - centerRadius) * stiffness;
-
-
     float2 acceleration = force / node.mass;
 
     node.velocity += acceleration * deltaTime;
-    
     node.velocity *= damping;
-
     node.position += node.velocity * deltaTime;
-    
-    node.debugCorePos = CorePosition; //debugging purposes
 
-    NodeBuffer[nodeIndex] = node;
+    node.debugCorePos = corePos;
+
+    _NodeBuffer[nodeIndex] = node;
 }
