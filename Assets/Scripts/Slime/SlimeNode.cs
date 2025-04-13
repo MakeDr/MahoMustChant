@@ -7,8 +7,6 @@ public struct SlimeNode
     public Vector2 velocity;
     public Vector2 force;
     public float mass;
-
-    public Vector2 debugCorePos; // 디버그용
 }
 
 public static class SlimeNodeUtility

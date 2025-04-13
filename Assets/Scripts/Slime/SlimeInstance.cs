@@ -82,7 +82,7 @@ public class SlimeInstance : MonoBehaviour
             for (int i = 0; i < slimeRenderer.NodeCount; i++)
             {
                 var node = data[i];
-                Debug.Log($"Node {i} | Pos: {node.position} | Vel: {node.velocity} | CorePos(on GPU): {node.debugCorePos}");
+                Debug.Log($"Node {i} | Pos: {node.position} | Vel: {node.velocity}");
             }
         });
     }

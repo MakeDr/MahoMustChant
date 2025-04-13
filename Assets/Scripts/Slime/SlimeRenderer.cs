@@ -6,10 +6,10 @@ public class SlimeRenderer : MonoBehaviour
 
     [SerializeField]
     private int nodeCount = 12;
-    public int NodeCount => nodeCount; // 읽기 전용 프로퍼티
+    public int NodeCount => nodeCount;
 
     private ComputeBuffer nodeBuffer;
-    public ComputeBuffer NodeBuffer => nodeBuffer; // 외부 접근 허용
+    public ComputeBuffer NodeBuffer => nodeBuffer;
 
     private int kernel;
     private Mesh mesh;
@@ -20,34 +20,32 @@ public class SlimeRenderer : MonoBehaviour
     {
         kernel = slimeComputeShader.FindKernel("CSMain");
         InitializeNodes();
-
-        // Mesh 초기화
-        mesh = new Mesh();
-
-        // MeshFilter가 없으면 자동으로 추가
-        meshFilter = GetComponent<MeshFilter>();
-        if (meshFilter == null)
-        {
-            meshFilter = gameObject.AddComponent<MeshFilter>();
-        }
-
-        // MeshRenderer 확인 후 없으면 추가
-        meshRenderer = GetComponent<MeshRenderer>();
-        if (meshRenderer == null)
-        {
-            meshRenderer = gameObject.AddComponent<MeshRenderer>();
-        }
-
-        meshFilter.mesh = mesh;
+        InitializeMeshComponents();
+        InitializeMesh();
     }
 
-    void InitializeNodes()
+    void Update()
+    {
+        if (nodeBuffer == null) return;
+
+        DispatchShader();
+        UpdateMesh();
+    }
+
+    void OnDestroy()
+    {
+        nodeBuffer?.Release();
+        nodeBuffer = null;
+    }
+
+    private void InitializeNodes()
     {
         int stride = SlimeNodeUtility.GetStride();
         nodeBuffer = new ComputeBuffer(nodeCount, stride);
 
         SlimeNode[] nodes = new SlimeNode[nodeCount];
         float angleStep = Mathf.PI * 2f / nodeCount;
+
         for (int i = 0; i < nodeCount; i++)
         {
             float angle = i * angleStep;
@@ -64,27 +62,43 @@ public class SlimeRenderer : MonoBehaviour
         slimeComputeShader.SetBuffer(kernel, "_NodeBuffer", nodeBuffer);
     }
 
-    void Update()
+    private void InitializeMeshComponents()
     {
-        if (nodeBuffer == null) return;
-
-        slimeComputeShader.Dispatch(kernel, Mathf.CeilToInt(nodeCount / 64.0f), 1, 1);
-        UpdateMesh();
+        meshFilter = GetComponent<MeshFilter>() ?? gameObject.AddComponent<MeshFilter>();
+        meshRenderer = GetComponent<MeshRenderer>() ?? gameObject.AddComponent<MeshRenderer>();
     }
 
-    void UpdateMesh()
+    private void InitializeMesh()
+    {
+        mesh = new Mesh();
+        meshFilter.mesh = mesh;
+    }
+
+    private void DispatchShader()
+    {
+        slimeComputeShader.SetInt("nodeCount", nodeCount);
+        slimeComputeShader.SetFloat("deltaTime", Time.deltaTime);
+        slimeComputeShader.SetFloat("stiffness", 10.0f);
+        slimeComputeShader.SetFloat("damping", 0.9f);
+        slimeComputeShader.SetFloat("centerRadius", 1.0f);
+        slimeComputeShader.SetBuffer(kernel, "_NodeBuffer", nodeBuffer);
+
+        int threadGroups = Mathf.CeilToInt(nodeCount / 64f);
+        slimeComputeShader.Dispatch(kernel, threadGroups, 1, 1);
+    }
+
+    private void UpdateMesh()
     {
         SlimeNode[] nodes = new SlimeNode[nodeCount];
         nodeBuffer.GetData(nodes);
 
         Vector3[] vertices = new Vector3[nodeCount];
-        int[] triangles = new int[(nodeCount - 2) * 3];
-
         for (int i = 0; i < nodeCount; i++)
         {
             vertices[i] = new Vector3(nodes[i].position.x, nodes[i].position.y, 0);
         }
 
+        int[] triangles = new int[(nodeCount - 2) * 3];
         int index = 0;
         for (int i = 1; i < nodeCount - 1; i++)
         {
@@ -96,14 +110,5 @@ public class SlimeRenderer : MonoBehaviour
         mesh.vertices = vertices;
         mesh.triangles = triangles;
         mesh.RecalculateNormals();
-    }
-
-    void OnDestroy()
-    {
-        if (nodeBuffer != null)
-        {
-            nodeBuffer.Release();
-            nodeBuffer = null;
-        }
     }
 }
