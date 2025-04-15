@@ -1,36 +1,37 @@
+// SlimeNode.compute
+
 #pragma kernel CSMain
 
 #define PI 3.14159265359f
 
-// Uniform variables
-float deltaTime;
-float stiffness; // Stiffness for attraction to the core target position
-float damping;
-float centerRadius;
-float neighborStiffness; // Stiffness for springs between adjacent nodes
-uint nodeCount;
+// --- Uniform Variables ---
+float deltaTime; // Time step
+float stiffness; // Spring constant towards the target circle position
+float damping; // Velocity damping factor (e.g., 0.99)
+float centerRadius; // Ideal radius of the node circle around the core
+float neighborStiffness; // Spring constant between adjacent nodes
+uint nodeCount; // Total number of nodes
+float maxRadialDistance; // <<< NEW: Max allowed distance from the core
 
-// Structure definition for each slime node
+// --- Structure Definition ---
 struct SlimeNode
 {
-    float2 position;
-    float2 velocity;
-    // float2 force; // Removed, calculated transiently
-    float mass;
+    float2 position; // Current position
+    float2 velocity; // Current velocity
+    float mass; // Node mass
+    // Removed 'force' as it's calculated transiently
 };
 
-// Input Buffer (Read-Only for this dispatch)
-// Contains node states from the *previous* frame
-StructuredBuffer<SlimeNode> _NodeBufferRead;
+// --- Input Buffers (Read-Only for this dispatch) ---
+StructuredBuffer<SlimeNode> _NodeBufferRead; // Node states from the *previous* frame
+StructuredBuffer<float4> _CoreBuffer; // Core data: xy=pos, z=rot, w=mana
 
-// Input Buffer for Core (Read-Only)
-StructuredBuffer<float4> _CoreBuffer; // x: pos.x, y: pos.y, z: rotation, w: mana
+// --- Output Buffer (Write-Only for this dispatch) ---
+RWStructuredBuffer<SlimeNode> _NodeBufferWrite; // Stores *newly calculated* node states
 
-// Output Buffer (Write-Only for this dispatch)
-// Stores the newly calculated node states for the *current* frame
-RWStructuredBuffer<SlimeNode> _NodeBufferWrite;
+// --- Helper Functions ---
 
-// Helper function to calculate the target position for a node
+// Calculates the target position for a node on the circle
 float2 CalculateTargetPosition(float2 corePos, float coreRot, float radius, uint index, uint count)
 {
     float baseAngle = (2.0f * PI * (float) index / (float) count);
@@ -40,48 +41,47 @@ float2 CalculateTargetPosition(float2 corePos, float coreRot, float radius, uint
     return targetPos;
 }
 
-// Helper function to calculate the spring force towards the target position
+// Calculates spring force towards a target position (Hooke's Law)
 float2 CalculateSpringForce(float2 currentPos, float2 targetPos, float k)
 {
-    float2 displacement = currentPos - targetPos;
-    float2 force = -displacement * k;
+    float2 displacement = currentPos - targetPos; // Vector from target to current
+    float2 force = -displacement * k; // Force pulling current towards target
     return force;
 }
 
-// Helper function to calculate spring force between two connected nodes
+// Calculates spring force between two connected nodes (A and B) acting on A
 float2 CalculateNeighborSpringForce(float2 posA, float2 posB, float restLength, float k)
 {
     float2 dir = posB - posA; // Vector from A to B
     float dist = length(dir);
 
-    // Avoid division by zero if nodes are at the same position
-    if (dist < 0.0001f)
+    if (dist < 0.0001f) // Avoid division by zero
     {
         return float2(0.0f, 0.0f);
     }
 
     float displacement = dist - restLength; // How much the spring is stretched (+) or compressed (-)
-    float2 force = normalize(dir) * displacement * k; // Force magnitude and direction
-
-    // This force acts on node A, pulling it towards B if stretched, pushing away if compressed.
+    float2 force = normalize(dir) * displacement * k; // Force direction and magnitude
+    // This force acts on A, pulling/pushing it relative to B
     return force;
 }
 
 
+// --- Main Kernel Function ---
 [numthreads(64, 1, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
     uint nodeIndex = id.x;
+
+    // Bounds check
     if (nodeIndex >= nodeCount)
         return;
 
     // --- Calculate Ideal Neighbor Distance (Rest Length) ---
-    // Circumference = 2 * PI * R
-    // Distance between nodes = Circumference / nodeCount
-    float restLength = (2.0f * PI * centerRadius) / (float) nodeCount;
+    // Assumes nodes are ideally spaced on the target circle
+    float restLength = (2.0f * PI * centerRadius) / max(1.0f, (float) nodeCount); // Avoid division by zero if nodeCount is 0
 
     // --- Load Data (READ from _NodeBufferRead) ---
-    // Load the current node's state from the *read* buffer
     SlimeNode currentNode = _NodeBufferRead[nodeIndex];
     float2 currentPos = currentNode.position;
     float2 currentVel = currentNode.velocity;
@@ -95,47 +95,67 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float coreRotation = coreData.z;
 
     // --- Calculate Forces ---
+
     // 1. Force towards the individual target position on the circle
     float2 targetPos = CalculateTargetPosition(corePos, coreRotation, centerRadius, nodeIndex, nodeCount);
     float2 forceToTarget = CalculateSpringForce(currentPos, targetPos, stiffness);
 
-    // 2. Forces from neighbors
+    // 2. Forces from neighbors (using data from _NodeBufferRead to avoid race conditions)
     float2 forceFromNeighbors = float2(0.0f, 0.0f);
+    if (nodeCount > 1) // Need at least 2 nodes for neighbors
+    {
+        uint prevIndex = (nodeIndex + nodeCount - 1) % nodeCount;
+        uint nextIndex = (nodeIndex + 1) % nodeCount;
 
-    // --- Calculate Neighbor Indices with Wrap-Around ---
-    // Using modulo (%) handles wrap-around cleanly
-    // Note: HLSL % operator can return negative for negative inputs,
-    // so adding nodeCount ensures a positive result before the final modulo.
-    uint prevIndex = (nodeIndex + nodeCount - 1) % nodeCount;
-    uint nextIndex = (nodeIndex + 1) % nodeCount;
+        float2 prevPos = _NodeBufferRead[prevIndex].position;
+        float2 nextPos = _NodeBufferRead[nextIndex].position;
 
-    // --- Load Neighbor Data (READ from _NodeBufferRead) ---
-    // IMPORTANT: Read neighbor positions also from the READ buffer to avoid race conditions!
-    float2 prevPos = _NodeBufferRead[prevIndex].position;
-    float2 nextPos = _NodeBufferRead[nextIndex].position;
-
-    // --- Calculate Neighbor Forces ---
-    // Force pulling/pushing current node towards/away from previous node
-    forceFromNeighbors += CalculateNeighborSpringForce(currentPos, prevPos, restLength, neighborStiffness);
-    // Force pulling/pushing current node towards/away from next node
-    forceFromNeighbors += CalculateNeighborSpringForce(currentPos, nextPos, restLength, neighborStiffness);
+        forceFromNeighbors += CalculateNeighborSpringForce(currentPos, prevPos, restLength, neighborStiffness);
+        forceFromNeighbors += CalculateNeighborSpringForce(currentPos, nextPos, restLength, neighborStiffness);
+    }
 
     // --- Sum Forces ---
     float2 totalForce = forceToTarget + forceFromNeighbors;
 
-    // --- Physics Integration (Euler) ---
+    // --- Physics Integration (Simple Euler Integration) ---
     float2 acceleration = totalForce / mass;
-    currentVel += acceleration * deltaTime;
-    currentVel *= damping;
-    currentPos += currentVel * deltaTime;
+    currentVel += acceleration * deltaTime; // Update velocity based on acceleration
+    currentVel *= damping; // Apply velocity damping
+    currentPos += currentVel * deltaTime; // Update position based on velocity
+
+    // --- Apply Max Radial Distance Constraint (NEW) ---
+    // Check if the updated position exceeds the maximum allowed distance from the core
+    float2 vecFromCore = currentPos - corePos;
+    float distFromCoreSqr = dot(vecFromCore, vecFromCore); // Squared distance check is faster
+    float maxDistSqr = maxRadialDistance * maxRadialDistance;
+
+    if (distFromCoreSqr > maxDistSqr && maxDistSqr > 0) // Check constraint and ensure maxDist is positive
+    {
+        // Node is outside the allowed radius
+        float distFromCore = sqrt(distFromCoreSqr); // Calculate actual distance
+        float2 dirFromCore = vecFromCore / distFromCore; // Direction from core to node
+
+        // 1. Project the position back onto the boundary sphere/circle
+        currentPos = corePos + dirFromCore * maxRadialDistance;
+
+        // 2. Adjust velocity: Remove the outward radial component
+        // This prevents the node from continuing to move outward after hitting the boundary
+        float radialVelocityComponent = dot(currentVel, dirFromCore); // Project velocity onto the radial direction
+        if (radialVelocityComponent > 0) // Only act if velocity is pointing outwards
+        {
+            currentVel -= dirFromCore * radialVelocityComponent; // Subtract the outward component
+        }
+        // Optional: Add slight bounce or further damping if needed
+        // currentVel *= 0.8; // Example: Dampen velocity further upon hitting boundary
+    }
 
     // --- Store Results (WRITE to _NodeBufferWrite) ---
-    // Create the output node structure
+    // Assign potentially modified position and velocity
     SlimeNode outputNode;
     outputNode.position = currentPos;
     outputNode.velocity = currentVel;
-    outputNode.mass = mass; // Keep mass the same (or update if needed)
+    outputNode.mass = mass; // Mass usually stays constant unless consumed/changed
 
-    // Write the updated state to the *write* buffer
+    // Write the final state to the output buffer
     _NodeBufferWrite[nodeIndex] = outputNode;
 }
