@@ -1,4 +1,4 @@
-// SlimeNode.compute - Phase 3: Basic Node Dynamics
+// SlimeNode.compute - Phase 4: Neighbor Interactions
 
 #pragma kernel CSMain
 
@@ -7,12 +7,12 @@
 
 // --- Uniform Variables (Set from C# SlimeInstance) ---
 float deltaTime; // Time step for integration (Time.fixedDeltaTime)
-float stiffness; // Spring constant pulling node towards target position
+float stiffness; // Spring constant: Node towards target circle position
 float damping; // Velocity damping factor (0.8 to < 1.0)
 float centerRadius; // Ideal radius of the node circle around the core
-uint nodeCount; // Total number of simulation nodes
-// --- Uniforms Not Used in Phase 3 (Keep commented or remove if preferred) ---
-// float neighborStiffness;
+float neighborStiffness; // <<< Stiffness for springs between adjacent nodes
+uint nodeCount; // Total number of simulation nodes (set by SetInt)
+// --- Uniforms Not Used in Phase 4 (Keep commented or remove if preferred) ---
 // float maxRadialDistance;
 // float minAngleRad;
 // float maxAngleRad;
@@ -47,7 +47,7 @@ StructuredBuffer<CoreBufferData> _CoreBuffer; // Core's state (position, rotatio
 RWStructuredBuffer<SlimeNode> _NodeBufferWrite; // Stores the *results* of this simulation step
 
 //-------------------------------------------------------------------------------------
-// Helper Function Implementations Needed for Phase 3
+// Helper Function Implementations Needed for Phase 4
 //-------------------------------------------------------------------------------------
 
 // Calculates the target position for a node on the ideal circle around the core
@@ -68,6 +68,30 @@ float2 CalculateSpringForce(float2 currentPos, float2 targetPos, float k)
     float2 force = -displacement * k; // Force pulls current position towards target
     return force;
 }
+
+// Calculates spring force between two connected nodes (A and B) acting on node A
+// Aims to maintain a specific restLength between them
+float2 CalculateNeighborSpringForce(float2 posA, float2 posB, float restLength, float k)
+{
+    float2 dir = posB - posA; // Vector pointing from A to B
+    float distSqr = dot(dir, dir); // Squared distance (cheaper to calculate initially)
+
+    // Avoid calculation if nodes are practically at the same position
+    if (distSqr < EPSILON * EPSILON)
+        return float2(0.0f, 0.0f);
+
+    float dist = sqrt(distSqr); // Calculate actual distance
+    float displacement = dist - restLength; // Difference from desired rest length
+    // Force = stiffness * displacement * direction (normalized)
+    float2 force = (dir / dist) * displacement * k; // Apply force along the line connecting A and B
+    return force; // This force should be applied to node A
+}
+
+// --- UNUSED HELPER FUNCTIONS (Commented Out for Phase 4) ---
+/*
+float AngleBetweenVectors(...) { ... }
+float2 CalculateAngleConstraintForce(...) { ... }
+*/
 
 //-------------------------------------------------------------------------------------
 // Main Compute Shader Kernel
@@ -94,17 +118,39 @@ void CSMain(uint3 id : SV_DispatchThreadID) // id.x is the unique index for this
     CoreBufferData coreData = _CoreBuffer[0];
     float2 corePos = coreData.posRotFlags.xy;
     float coreRotation = coreData.posRotFlags.z;
-    // Collision info is loaded but not used in Phase 3
+    // Collision info is loaded but not used in Phase 4
+
+    // --- Calculate Ideal Neighbor Distance (Rest Length) ---
+    // Approximate distance nodes should be apart if perfectly arranged on the circle
+    float safeCount = max(1.0f, (float) nodeCount);
+    float restLength = (2.0f * PI * centerRadius) / safeCount; // Arc length approximation
 
     // --- Calculate Forces ---
-    // 1. Calculate the target position for this node on the circle
+    // 1. Calculate force towards the target position
     float2 targetPos = CalculateTargetPosition(corePos, coreRotation, centerRadius, nodeIndex, nodeCount);
+    float2 forceToTarget = CalculateSpringForce(currentPos, targetPos, stiffness);
 
-    // 2. Calculate the spring force pulling the node towards its target position
-    float2 forceToTarget = CalculateSpringForce(currentPos, targetPos, stiffness); // Use the stiffness uniform
+    // 2. Calculate forces from Neighbors
+    float2 forceFromNeighbors = float2(0, 0); // Initialize neighbor force
+    if (nodeCount > 1) // Need at least 2 nodes for neighbors
+    {
+        // Calculate indices of previous and next nodes with wrap-around
+        uint prevIndex = (nodeIndex + nodeCount - 1) % nodeCount;
+        uint nextIndex = (nodeIndex + 1) % nodeCount;
 
-    // In Phase 3, this is the only force considered
-    float2 totalForce = forceToTarget;
+        // Read neighbor positions from the Read buffer (Crucial for double buffering)
+        float2 prevPos = _NodeBufferRead[prevIndex].position;
+        float2 nextPos = _NodeBufferRead[nextIndex].position;
+
+        // Calculate spring force from the previous neighbor
+        forceFromNeighbors += CalculateNeighborSpringForce(currentPos, prevPos, restLength, neighborStiffness); // Use neighborStiffness
+        // Calculate spring force from the next neighbor
+        forceFromNeighbors += CalculateNeighborSpringForce(currentPos, nextPos, restLength, neighborStiffness); // Use neighborStiffness
+    }
+
+    // --- Sum Forces ---
+    // Combine the force pulling towards the target and forces from neighbors
+    float2 totalForce = forceToTarget + forceFromNeighbors; // Added neighbor force
 
     // --- Physics Integration (Simple Euler Integration) ---
     // Calculate acceleration: a = F / m
@@ -112,29 +158,28 @@ void CSMain(uint3 id : SV_DispatchThreadID) // id.x is the unique index for this
     // Update velocity: v = v + a * dt
     currentVel += acceleration * deltaTime;
     // Apply damping to velocity: v = v * dampingFactor
-    currentVel *= damping; // Use the damping uniform
+    currentVel *= damping;
     // Predict next position: p_predicted = p + v * dt
     float2 predictedPos = currentPos + currentVel * deltaTime;
 
-    // --- NO CONSTRAINTS APPLIED IN PHASE 3 ---
-    // Neighbor springs, angle constraints, radial distance, core collision response
-    // will be added in later phases.
+    // --- NO CONSTRAINTS APPLIED IN PHASE 4 YET ---
+    // Radial distance, angle constraints, core collision response will be added later.
 
     // --- Final Position Update ---
     // In this phase, the predicted position is the final position
     currentPos = predictedPos;
 
     // --- Store Results ---
-    // Prepare the output structure for writing
-    SlimeNode outputNode; // Declare the output struct
+    // Prepare the output structure with updated values
+    SlimeNode outputNode;
     outputNode.position = currentPos;
-    outputNode.velocity = currentVel; // Store the possibly adjusted velocity
+    outputNode.velocity = currentVel; // Store the updated velocity
     outputNode.mass = mass;
-    // Initialize padding fields explicitly (e.g., to 0)
+    // Initialize padding fields explicitly (best practice for safety)
     outputNode.padding1 = 0.0f;
     outputNode.padding2 = 0.0f;
     outputNode.padding3 = 0.0f;
-    
+
     // Write the final state to the output buffer for the next frame's read pass
     _NodeBufferWrite[nodeIndex] = outputNode;
 }

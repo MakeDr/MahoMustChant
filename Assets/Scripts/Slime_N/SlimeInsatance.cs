@@ -15,11 +15,10 @@ public class SlimeInstance : MonoBehaviour
     [Header("Simulation Parameters")]
     [Range(8, 256)] public int nodeCount = 16;
     public float centerRadius = 0.8f;
-    // --- Phase 3 Parameters ---
     [Range(0.1f, 50.0f)] public float stiffness = 15.0f; // Spring stiffness towards target
     [Range(0.8f, 1.0f)] public float damping = 0.95f;   // Velocity damping (closer to 1 = less damping)
-    // --- Parameters for Later Phases (Declare them now if you like) ---
-    public float neighborStiffness = 10.0f;
+    [Range(0.1f, 50.0f)] public float neighborStiffness = 10.0f; // <<< Neighbor spring stiffness
+    // --- Parameters for Later Phases ---
     public float maxNodeDistanceExtension = 0.4f;
     [Range(0f, 90f)] public float minNodeAngleDeg = 10.0f;
     [Range(0f, 180f)] public float maxNodeAngleDeg = 50.0f;
@@ -58,6 +57,19 @@ public class SlimeInstance : MonoBehaviour
     private Color groundedTensionLineColor;
     private SlimeNode[] gizmoNodeDataCache;
 
+    // --- Struct Definitions ---
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SlimeNode
+    {
+        public Vector2 position; public Vector2 velocity; public float mass;
+        public float padding1; public float padding2; public float padding3; // Ensure 32 bytes total
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CoreBufferData
+    {
+        public Vector4 posRotFlags; // xy: pos, z: rot(rad), w: flags(uint as float)
+        public Vector4 normalMana;  // xy: normal, z: mana, w: padding
+    }
 
     void Start()
     {
@@ -90,8 +102,6 @@ public class SlimeInstance : MonoBehaviour
 
         try
         {
-            // Initialize buffers based on current nodeCount
-            // Consider using a fixed max size later if nodeCount changes dynamically
             nodeBufferA = new ComputeBuffer(nodeCount, nodeStride, ComputeBufferType.Structured);
             nodeBufferB = new ComputeBuffer(nodeCount, nodeStride, ComputeBufferType.Structured);
             coreBuffer = new ComputeBuffer(1, coreStride, ComputeBufferType.Structured);
@@ -156,14 +166,14 @@ public class SlimeInstance : MonoBehaviour
         ComputeBuffer readBuffer = isA_CurrentReadBuffer ? nodeBufferA : nodeBufferB;
         ComputeBuffer writeBuffer = isA_CurrentReadBuffer ? nodeBufferB : nodeBufferA;
 
-        // --- Set Uniforms for Phase 3 ---
+        // --- Set Shader Uniforms ---
         slimeComputeShader.SetInt("nodeCount", nodeCount);
         slimeComputeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
-        slimeComputeShader.SetFloat("stiffness", stiffness); // <<< Set Phase 3 uniform
-        slimeComputeShader.SetFloat("damping", damping);     // <<< Set Phase 3 uniform
+        slimeComputeShader.SetFloat("stiffness", stiffness);
+        slimeComputeShader.SetFloat("damping", damping);
         slimeComputeShader.SetFloat("centerRadius", centerRadius);
-        // --- Set other uniforms for later phases when needed ---
-        // slimeComputeShader.SetFloat("neighborStiffness", neighborStiffness);
+        slimeComputeShader.SetFloat("neighborStiffness", neighborStiffness); // <<< Set Phase 4 uniform
+        // --- Set other uniforms for later phases ---
         // float actualMaxRadialDistance = centerRadius + maxNodeDistanceExtension;
         // slimeComputeShader.SetFloat("maxRadialDistance", actualMaxRadialDistance);
         // slimeComputeShader.SetFloat("minAngleRad", minNodeAngleDeg * Mathf.Deg2Rad);
@@ -209,7 +219,7 @@ public class SlimeInstance : MonoBehaviour
         nodeBufferA = null; nodeBufferB = null; coreBuffer = null;
     }
 
-    // --- GIZMO DRAWING --- (Full implementation from previous answer)
+    // --- GIZMO DRAWING --- (Full implementation - no changes needed from previous version for Phase 4 logic)
 #if UNITY_EDITOR
     void OnDrawGizmos()
     {
