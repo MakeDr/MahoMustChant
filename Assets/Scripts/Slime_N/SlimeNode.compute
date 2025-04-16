@@ -1,0 +1,140 @@
+// SlimeNode.compute - Phase 3: Basic Node Dynamics
+
+#pragma kernel CSMain
+
+#define PI 3.14159265359f
+#define EPSILON 0.0001f // Small value for safe float comparisons and division checks
+
+// --- Uniform Variables (Set from C# SlimeInstance) ---
+float deltaTime; // Time step for integration (Time.fixedDeltaTime)
+float stiffness; // Spring constant pulling node towards target position
+float damping; // Velocity damping factor (0.8 to < 1.0)
+float centerRadius; // Ideal radius of the node circle around the core
+uint nodeCount; // Total number of simulation nodes
+// --- Uniforms Not Used in Phase 3 (Keep commented or remove if preferred) ---
+// float neighborStiffness;
+// float maxRadialDistance;
+// float minAngleRad;
+// float maxAngleRad;
+// float angleConstraintStiffness;
+// float collisionPushForce;
+// float coreColliderRadius;
+
+// --- Structure Definition (Must match C# exactly, including padding) ---
+struct SlimeNode
+{
+    float2 position; // Current 2D position
+    float2 velocity; // Current 2D velocity
+    float mass; // Mass of the node
+    // Padding to match C# struct size (likely 32 bytes total)
+    float padding1;
+    float padding2;
+    float padding3;
+};
+
+// Core Data Structure (Must match C# CoreBufferData struct)
+struct CoreBufferData
+{
+    float4 posRotFlags; // xy: position, z: rotation(rad), w: collisionFlags (packed uint as float)
+    float4 normalMana; // xy: relevantCollisionNormal, z: mana, w: unused/padding
+};
+
+// --- Input Buffers (Read-Only for this dispatch) ---
+StructuredBuffer<SlimeNode> _NodeBufferRead; // Node data from the *previous* simulation step
+StructuredBuffer<CoreBufferData> _CoreBuffer; // Core's state (position, rotation, collision info)
+
+// --- Output Buffer (Write-Only for this dispatch) ---
+RWStructuredBuffer<SlimeNode> _NodeBufferWrite; // Stores the *results* of this simulation step
+
+//-------------------------------------------------------------------------------------
+// Helper Function Implementations Needed for Phase 3
+//-------------------------------------------------------------------------------------
+
+// Calculates the target position for a node on the ideal circle around the core
+float2 CalculateTargetPosition(float2 corePos, float coreRot, float radius, uint index, uint count)
+{
+    float safeCount = max(1.0f, (float) count); // Prevent division by zero if count is 0
+    float baseAngle = (2.0f * PI * (float) index / safeCount); // Calculate base angle based on index
+    float currentAngle = baseAngle + coreRot; // Add core's current rotation
+    float2 direction = float2(cos(currentAngle), sin(currentAngle)); // Unit vector from core
+    float2 targetPos = corePos + direction * radius; // Calculate position on the circle
+    return targetPos;
+}
+
+// Calculates spring force towards a target position based on Hooke's Law (F = -k * x)
+float2 CalculateSpringForce(float2 currentPos, float2 targetPos, float k)
+{
+    float2 displacement = currentPos - targetPos; // Vector from target to current position
+    float2 force = -displacement * k; // Force pulls current position towards target
+    return force;
+}
+
+//-------------------------------------------------------------------------------------
+// Main Compute Shader Kernel
+//-------------------------------------------------------------------------------------
+[numthreads(64, 1, 1)] // Defines the number of threads per group
+void CSMain(uint3 id : SV_DispatchThreadID) // id.x is the unique index for this thread/node
+{
+    uint nodeIndex = id.x;
+
+    // Bounds check: Ensure the thread index is within the valid range of nodes
+    if (nodeIndex >= nodeCount)
+        return;
+
+    // --- Load Data ---
+    SlimeNode currentNode = _NodeBufferRead[nodeIndex]; // Read previous state
+    float2 currentPos = currentNode.position;
+    float2 currentVel = currentNode.velocity;
+    float mass = currentNode.mass;
+    // Ensure mass is valid
+    if (mass <= EPSILON)
+        mass = 1.0f;
+
+    // Load core data (position and rotation are needed)
+    CoreBufferData coreData = _CoreBuffer[0];
+    float2 corePos = coreData.posRotFlags.xy;
+    float coreRotation = coreData.posRotFlags.z;
+    // Collision info is loaded but not used in Phase 3
+
+    // --- Calculate Forces ---
+    // 1. Calculate the target position for this node on the circle
+    float2 targetPos = CalculateTargetPosition(corePos, coreRotation, centerRadius, nodeIndex, nodeCount);
+
+    // 2. Calculate the spring force pulling the node towards its target position
+    float2 forceToTarget = CalculateSpringForce(currentPos, targetPos, stiffness); // Use the stiffness uniform
+
+    // In Phase 3, this is the only force considered
+    float2 totalForce = forceToTarget;
+
+    // --- Physics Integration (Simple Euler Integration) ---
+    // Calculate acceleration: a = F / m
+    float2 acceleration = totalForce / mass;
+    // Update velocity: v = v + a * dt
+    currentVel += acceleration * deltaTime;
+    // Apply damping to velocity: v = v * dampingFactor
+    currentVel *= damping; // Use the damping uniform
+    // Predict next position: p_predicted = p + v * dt
+    float2 predictedPos = currentPos + currentVel * deltaTime;
+
+    // --- NO CONSTRAINTS APPLIED IN PHASE 3 ---
+    // Neighbor springs, angle constraints, radial distance, core collision response
+    // will be added in later phases.
+
+    // --- Final Position Update ---
+    // In this phase, the predicted position is the final position
+    currentPos = predictedPos;
+
+    // --- Store Results ---
+    // Prepare the output structure for writing
+    SlimeNode outputNode; // Declare the output struct
+    outputNode.position = currentPos;
+    outputNode.velocity = currentVel; // Store the possibly adjusted velocity
+    outputNode.mass = mass;
+    // Initialize padding fields explicitly (e.g., to 0)
+    outputNode.padding1 = 0.0f;
+    outputNode.padding2 = 0.0f;
+    outputNode.padding3 = 0.0f;
+    
+    // Write the final state to the output buffer for the next frame's read pass
+    _NodeBufferWrite[nodeIndex] = outputNode;
+}
